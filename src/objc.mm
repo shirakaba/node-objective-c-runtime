@@ -223,14 +223,29 @@ napi_value MsgSend(napi_env env, napi_callback_info info) {
 
       [invocation setArgument:&b atIndex: i];
     } else if (strcmp("@", argumentType) == 0) {
-      if (!valueisbuffer && valuetype != napi_null) {
+      if (
+        !valueisbuffer &&
+        valuetype != napi_null &&
+        // We've not been passed a Buffer. However, we may have been passed a
+        // primitive that could be marshalled into a Buffer. For now, we'll
+        // auto-marshal strings.
+        valuetype != napi_string
+      ) {
         napi_throw_type_error(env, NULL, [[NSString stringWithFormat:@"Expected argument %lu to be a buffer!", (i + 1)] UTF8String]);
         return nullptr;
       }
 
       id obj = nil;
 
-      if (valuetype != napi_null) {
+      if (valuetype == napi_string) {
+        size_t strlen = 0;
+        napi_get_value_string_utf8(env, vargs[i], NULL, 0, &strlen);
+
+        char* str = (char*)malloc(strlen + 1);
+        napi_get_value_string_utf8(env, vargs[i], str, strlen + 1, &strlen);
+
+        obj = [[NSString alloc] initWithUTF8String:str];
+      } else if (valuetype != napi_null) {
         void* objData;
         size_t objLength;
         napi_get_buffer_info(env, vargs[i], &objData, &objLength);
