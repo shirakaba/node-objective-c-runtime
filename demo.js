@@ -8,28 +8,40 @@ const classes = new Proxy(
   {
     get(target, className, receiver) {
       console.log(`Get className ${className}`);
-      /** @type {Buffer} */
-      const classInstance = getClass(className);
+
+      class ObjcClass {
+        /** @type {Buffer} */
+        static nativeClass = getClass(className);
+        /**
+         * @param {string} className
+         */
+        constructor(className){
+          /** @type {string} */
+          this.nativeClassName = className;
+        }
+        toString() {
+          const address = [];
+          for (let i = 0, length = this.nativeClass.length; i < length; i++) {
+            address.push(`${this.nativeClass[i].toString(16).padStart(2, "0")}`);
+          }
+
+          return `<${this.nativeClassName} ${address.join(" ")}>`;
+        }
+        [Symbol.for("nodejs.util.inspect.custom")](
+          depth,
+          inspectOptions,
+          inspect
+        ) {
+          return this.toString();
+        }
+      }
+      Object.defineProperty (ObjcClass, 'name', { value: className });
+      // Allow nativeClass to be accessed both on the instance and on the class.
+      // This allows us to send messages either to the class or an instance.
+      Object.defineProperty (ObjcClass.prototype, 'nativeClass', { value: ObjcClass.nativeClass });
 
       return new Proxy(
-        {
-          instance: classInstance,
-          toString() {
-            let address = [];
-            for (let i = 0, length = classInstance.length; i < length; i++) {
-              address.push(`${classInstance[i].toString(16).padStart(2, "0")}`);
-            }
-
-            return `<${className} ${address.join(" ")}>`;
-          },
-          [Symbol.for("nodejs.util.inspect.custom")](
-            depth,
-            inspectOptions,
-            inspect
-          ) {
-            return this.toString();
-          },
-        },
+        ObjcClass,
         {
           // `new classes.NSString()` -> `classes.NSString.alloc().init()`
           construct(target, args) {
@@ -38,7 +50,8 @@ const classes = new Proxy(
             //   msgSend(target, registerName('alloc')),
             //   registerName('init'),
             // );
-            return target.instance.alloc().init();
+            // return this.alloc().init();
+            return this.get(target, 'alloc')().init();
           },
           has(target, prop, receiver) {
             console.log(`has('${prop}')`);
@@ -61,8 +74,13 @@ const classes = new Proxy(
             if (prop === "toString") {
               return Reflect.get(...arguments);
             }
+            // FIXME: if this returns a Buffer around an Obj-C class, we need to
+            // wrap it with our proxy somehow. Same for class instance. And,
+            // well, maybe ultimately every native data type.
+            // This is why we can manage `classes.NSString.alloc()` but not
+            // `classes.NSString.alloc().init()`.
             return (...args) =>
-              msgSend(target.instance, registerName(prop), ...args);
+              msgSend(target.nativeClass, registerName(prop), ...args);
           },
         }
       );
@@ -71,13 +89,13 @@ const classes = new Proxy(
 );
 
 const str = classes.NSString;
-const alloc = str.alloc();
-// const init = str.alloc().init();
-// const nue = new str();
-
 console.log(str);
+const alloc = str.alloc();
 console.log(alloc);
-// console.log(init);
+// const init = str.alloc().init();
+const nue = new str();
 console.log(nue);
+
+// console.log(init);
 
 // console.log(classes.NSString);
