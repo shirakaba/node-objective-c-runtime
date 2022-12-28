@@ -8,7 +8,57 @@
 
 #include <napi.h>
 
-// bool object_isClass(self)
+napi_value IsClassInstance(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+
+  napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+  napi_value result = nullptr;
+
+  if (argc < 1) {
+    napi_get_boolean(env, false, &result);
+    return result;
+  }
+
+  bool valuetype0isbuffer = false;
+  napi_is_buffer(env, args[0], &valuetype0isbuffer);
+
+  if (!valuetype0isbuffer) {
+    napi_get_boolean(env, false, &result);
+    return result;
+  }
+
+  // We use a try-catch because the buffer could be pointing at just about any
+  // data type (and the lifetime is not guaranteed).
+  @try {
+    void* selfData;
+    size_t selfLength;
+    napi_get_buffer_info(env, args[0], &selfData, &selfLength);
+
+    id self;
+    memcpy(&self, selfData, sizeof(self));
+
+    // There's no elegant way to check whether a data type is a class instance.
+    // Here, we use a two-step process:
+    // - If it's a kind of NSObject, then it's either a class or class instance.
+    // - If getting its class returns a metaclass, then it's a class. Otherwise,
+    //   a class instance.
+    if([self isKindOfClass:[NSObject class]]){
+      napi_get_boolean(env, !class_isMetaClass(object_getClass(self)), &result);
+    } else {
+      napi_get_boolean(env, false, &result);
+    }
+  }
+  @catch (NSException *exception) {
+    // Handles both ObjC and C++ exceptions as long as it's 64-bit.
+    napi_get_boolean(env, false, &result);
+  }
+
+  return result;
+}
+
+// BOOL object_isClass(id self)
 napi_value IsClass(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value args[1];
@@ -30,13 +80,21 @@ napi_value IsClass(napi_env env, napi_callback_info info) {
     return result;
   }
 
-  void* selfData;
-  size_t selfLength;
-  napi_get_buffer_info(env, args[0], &selfData, &selfLength);
+  // We use a try-catch because the buffer could be pointing at just about any
+  // data type (and the lifetime is not guaranteed).
+  @try {
+    void* selfData;
+    size_t selfLength;
+    napi_get_buffer_info(env, args[0], &selfData, &selfLength);
 
-  id self;
-  memcpy(&self, selfData, sizeof(self));
-  napi_get_boolean(env, object_isClass(self), &result);
+    id self;
+    memcpy(&self, selfData, sizeof(self));
+    napi_get_boolean(env, object_isClass(self), &result);
+  }
+  @catch (NSException *exception) {
+    // Handles both ObjC and C++ exceptions as long as it's 64-bit.
+    napi_get_boolean(env, false, &result);
+  }
 
   return result;
 }
@@ -411,6 +469,7 @@ napi_value__* Init(napi_env env, napi_value exports) {
   napi_status status;
 
   napi_property_descriptor isClass = DECLARE_NAPI_METHOD("isClass", IsClass);
+  napi_property_descriptor isClassInstance = DECLARE_NAPI_METHOD("isClassInstance", IsClassInstance);
   napi_property_descriptor getClass = DECLARE_NAPI_METHOD("getClass", GetClass);
   napi_property_descriptor allocateClassPair = DECLARE_NAPI_METHOD("allocateClassPair", AllocateClassPair);
   napi_property_descriptor msgSend = DECLARE_NAPI_METHOD("msgSend", MsgSend);
@@ -419,6 +478,7 @@ napi_value__* Init(napi_env env, napi_value exports) {
 
   const napi_property_descriptor properties[] = {
     isClass,
+    isClassInstance,
     getClass,
     allocateClassPair,
     msgSend,
