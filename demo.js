@@ -6,6 +6,11 @@ const { registerName } = sel;
 const proxiedObjcClassCache = {};
 const proxiedObjcClassInstanceCache = new WeakMap();
 
+const nativeProxySymbol = Symbol('native proxy');
+function isNativeProxy(obj){
+  return !!obj?.[nativeProxySymbol];
+}
+
 const classes = new Proxy(
   {},
   {
@@ -46,24 +51,7 @@ function proxyObjcClass(className) {
   const proxy = new Proxy(NSObjectWrapper, {
     // Proxies `new classes.NSString()` -> `classes.NSString.alloc().init()`
     construct(target, args) {
-      console.log(`construct()`, ...args);
       return this.get(target, "alloc")().init();
-    },
-    has(target, prop, receiver) {
-      console.log(`has('${prop}')`);
-      return Reflect.has(...arguments);
-    },
-    getOwnPropertyDescriptor(target, prop) {
-      console.log(`getOwnPropertyDescriptor('${prop}')`);
-      return Reflect.getOwnPropertyDescriptor(...arguments);
-    },
-    getPrototypeOf(target, prop, receiver) {
-      console.log(`getPrototypeOf('${prop}')`);
-      return Reflect.getPrototypeOf(...arguments);
-    },
-    ownKeys(target) {
-      console.log(`ownKeys('${prop}')`);
-      return Reflect.ownKeys(...arguments);
     },
     get(target, prop, receiver) {
       console.log(`get('${prop}')`);
@@ -72,11 +60,13 @@ function proxyObjcClass(className) {
       }
 
       return (...args) => {
-        // TODO: marshal any args from JS into native as necessary - unless this
-        // is already largely be handled for us on the native side.
-        const result = msgSend(target.native, registerName(prop), ...args);
+        const result = msgSend(
+          target.native,
+          registerName(prop),
+          ...args.map(marshalJSValueToNative),
+        );
 
-        return marshallObjcValueToJs(result);
+        return marshalObjcValueToJs(result);
       };
     },
   });
@@ -126,24 +116,7 @@ function proxyObjcClassInstance(classInstance) {
   const proxy = new Proxy(NSObjectWrapper, {
     // Proxies `new classes.NSString()` -> `classes.NSString.alloc().init()`
     construct(target, args) {
-      console.log(`construct()`, ...args);
-      return this.get(target, "alloc")().init();
-    },
-    has(target, prop, receiver) {
-      console.log(`has('${prop}')`);
-      return Reflect.has(...arguments);
-    },
-    getOwnPropertyDescriptor(target, prop) {
-      console.log(`getOwnPropertyDescriptor('${prop}')`);
-      return Reflect.getOwnPropertyDescriptor(...arguments);
-    },
-    getPrototypeOf(target, prop, receiver) {
-      console.log(`getPrototypeOf('${prop}')`);
-      return Reflect.getPrototypeOf(...arguments);
-    },
-    ownKeys(target) {
-      console.log(`ownKeys('${prop}')`);
-      return Reflect.ownKeys(...arguments);
+      throw new TypeError('Class instances are not constructors.');
     },
     get(target, prop, receiver) {
       console.log(`get('${prop}')`);
@@ -152,11 +125,13 @@ function proxyObjcClassInstance(classInstance) {
       }
 
       return (...args) => {
-        // TODO: marshal any args from JS into native as necessary - unless this
-        // is already largely be handled for us on the native side.
-        const result = msgSend(target.native, registerName(prop), ...args);
+        const result = msgSend(
+          target.native,
+          registerName(prop),
+          ...args.map(marshalJSValueToNative),
+        );
 
-        return marshallObjcValueToJs(result);
+        return marshalObjcValueToJs(result);
       };
     },
   });
@@ -165,7 +140,13 @@ function proxyObjcClassInstance(classInstance) {
   return proxy;
 }
 
-function marshallObjcValueToJs(result) {
+function marshalJSValueToNative(arg){
+  // For now, we just pull out the .native property from any native properties,
+  // but there will be other cases to handle later.
+  return isNativeProxy(arg) ? arg.native : arg;
+}
+
+function marshalObjcValueToJs(result) {
   if (!(result instanceof Buffer)) {
     console.log("Result was not a buffer", result);
     return result;
@@ -193,36 +174,14 @@ function marshallObjcValueToJs(result) {
   return result;
 }
 
-const stringA = msgSend(
-  msgSend(getClass("NSString"), registerName("alloc")),
-  registerName("initWithString:"),
-  "Hello"
-);
+const { NSString } = classes;
 
-const str = classes.NSString;
-// console.log(str);
+const hello = NSString.alloc()["initWithString:"]("Hello");
 
-// console.log("isClass(classes.NSString)", isClass(str));
-// console.log("isClass(classes.NSString.native)", isClass(str.native));
-// console.log("isClass(getClass('NSString'))", isClass(getClass("NSString")));
-// console.log("isClass(null)", isClass(null));
-// console.log("isClass(stringA)", isClass(stringA));
+const str = NSString.alloc()
+  ["initWithString:"]("Hello")
+  ['stringByAppendingString:'](
+    NSString.alloc()["initWithString:"]("World").native
+  );
 
-// console.log("isClassInstance(classes.NSString)", isClassInstance(str));
-// console.log("isClassInstance(classes.NSString.native)", isClassInstance(str.native));
-// console.log("isClassInstance(getClass('NSString'))", isClassInstance(getClass("NSString")));
-// console.log("isClassInstance(null)", isClassInstance(null));
-// console.log("isClassInstance(stringA)", isClassInstance(stringA));
-
-// console.log("getClassName(stringA)", getClassName(stringA));
-// console.log("getClassName(classes.NSString.native)", getClassName(classes.NSString.native));
-
-const alloc = str.alloc();
-console.log(alloc);
-const init = alloc.init();
-console.log(init);
-
-const nue = new str();
-console.log(nue);
-
-// console.log(classes.NSString);
+console.log(str);
