@@ -3,44 +3,58 @@ const { objc, sel } = require(".");
 const { isClass, isClassInstance, getClass, getClassName, msgSend } = objc;
 const { registerName } = sel;
 
+const wrappedObjcClassCache = {};
+
+function wrapObjcClass(className){
+  if(wrappedObjcClassCache[className]){
+    return wrappedObjcClassCache[className];
+  }
+
+  class NSObjectWrapper {
+    /** @type {Buffer} */
+    static nativeClass = getClass(className);
+    /**
+     * @param {string} className
+     */
+    constructor(className) {
+      /** @type {string} */
+      this.nativeClassName = className;
+    }
+    toString() {
+      const address = [];
+      for (let i = 0, length = this.nativeClass.length; i < length; i++) {
+        address.push(
+          `${this.nativeClass[i].toString(16).padStart(2, "0")}`
+        );
+      }
+  
+      return `<${this.nativeClassName} ${address.join(" ")}>`;
+    }
+    [Symbol.for("nodejs.util.inspect.custom")]() {
+      return this.toString();
+    }
+  }
+  Object.defineProperty(NSObjectWrapper, "name", { value: className });
+  // Allow nativeClass to be accessed both on the instance and on the class.
+  // This allows us to send messages either to the class or an instance.
+  Object.defineProperty(NSObjectWrapper.prototype, "nativeClass", {
+    value: NSObjectWrapper.nativeClass,
+  });
+
+  wrappedObjcClassCache[className] = NSObjectWrapper;
+  return NSObjectWrapper;
+}
+
+
 const classes = new Proxy(
   {},
   {
     get(target, className, receiver) {
       console.log(`Get className ${className}`);
 
-      class NSObjectWrapper {
-        /** @type {Buffer} */
-        static nativeClass = getClass(className);
-        /**
-         * @param {string} className
-         */
-        constructor(className) {
-          /** @type {string} */
-          this.nativeClassName = className;
-        }
-        toString() {
-          const address = [];
-          for (let i = 0, length = this.nativeClass.length; i < length; i++) {
-            address.push(
-              `${this.nativeClass[i].toString(16).padStart(2, "0")}`
-            );
-          }
+      const WrappedObjcClass = wrapObjcClass(className);
 
-          return `<${this.nativeClassName} ${address.join(" ")}>`;
-        }
-        [Symbol.for("nodejs.util.inspect.custom")]() {
-          return this.toString();
-        }
-      }
-      Object.defineProperty(NSObjectWrapper, "name", { value: className });
-      // Allow nativeClass to be accessed both on the instance and on the class.
-      // This allows us to send messages either to the class or an instance.
-      Object.defineProperty(NSObjectWrapper.prototype, "nativeClass", {
-        value: NSObjectWrapper.nativeClass,
-      });
-
-      return new Proxy(NSObjectWrapper, {
+      return new Proxy(WrappedObjcClass, {
         // Proxies `new classes.NSString()` -> `classes.NSString.alloc().init()`
         construct(target, args) {
           console.log(`construct()`, ...args);
@@ -116,11 +130,13 @@ console.log("isClassInstance(stringA)", isClassInstance(stringA));
 
 console.log("getClassName(stringA)", getClassName(stringA));
 console.log("getClassName(classes.NSString.nativeClass)", getClassName(classes.NSString.nativeClass));
+
 const alloc = str.alloc();
 console.log(alloc);
 // const init = str.alloc().init();
-const nue = new str();
-console.log(nue);
+
+// const nue = new str();
+// console.log(nue);
 
 // console.log(init);
 
