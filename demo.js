@@ -3,93 +3,21 @@ const { objc, sel } = require(".");
 const { isClass, isClassInstance, getClass, getClassName, msgSend } = objc;
 const { registerName } = sel;
 
-const wrappedObjcClassCache = {};
-const wrappedObjcClassInstanceCache = new WeakMap();
+const proxiedObjcClassCache = {};
+const proxiedObjcClassInstanceCache = new WeakMap();
 
 const classes = new Proxy(
   {},
   {
     get(target, className, receiver) {
-      console.log(`Get className ${className}`);
-
-      const WrappedObjcClass = wrapObjcClass(className);
-
-      return new Proxy(WrappedObjcClass, {
-        // Proxies `new classes.NSString()` -> `classes.NSString.alloc().init()`
-        construct(target, args) {
-          console.log(`construct()`, ...args);
-          return this.get(target, "alloc")().init();
-        },
-        has(target, prop, receiver) {
-          console.log(`has('${prop}')`);
-          return Reflect.has(...arguments);
-        },
-        getOwnPropertyDescriptor(target, prop) {
-          console.log(`getOwnPropertyDescriptor('${prop}')`);
-          return Reflect.getOwnPropertyDescriptor(...arguments);
-        },
-        getPrototypeOf(target, prop, receiver) {
-          console.log(`getPrototypeOf('${prop}')`);
-          return Reflect.getPrototypeOf(...arguments);
-        },
-        ownKeys(target) {
-          console.log(`ownKeys('${prop}')`);
-          return Reflect.ownKeys(...arguments);
-        },
-        get(target, prop, receiver) {
-          console.log(`get('${prop}')`);
-          if ([...Object.keys(WrappedObjcClass), "toString"].includes(prop)) {
-            return Reflect.get(...arguments);
-          }
-          // FIXME: if this returns a Buffer around an Obj-C class, we need to
-          // wrap it with our proxy somehow. Same for class instance. And,
-          // well, maybe ultimately every native data type.
-          // This is why we can manage `classes.NSString.alloc()` but not
-          // `classes.NSString.alloc().init()`.
-          return (...args) => {
-            // TODO: marshal any args from JS into native as necessary -
-            // unless this is already largely be handled for us on the native
-            // side.
-            const result = msgSend(
-              target.native,
-              registerName(prop),
-              ...args
-            );
-
-            if (!(result instanceof Buffer)) {
-              console.log('Result ');
-              return result;
-            }
-
-            if(isClass(result)){
-              const className = getClassName(result);
-              console.log(`get(${prop}): wrapping class ${className}`);
-              // A bit of a wasted step (we ask for the class name only to call
-              // `getClass(className)` on it) but allows us to reuse our cache,
-              // which is keyed on className.
-              return wrapObjcClass(className);
-            }
-
-            if(isClassInstance(result)){
-              console.log(`get(${prop}): wrapping class instance.`);
-              return wrapObjcClassInstance(result);
-            }
-
-            // It's probably some other native thing that hasn't been
-            // marshalled into a JS type, so just a missing feature.
-            console.warn('Unexpectedly got a Buffer that is neither a class nor a class instance.');
-
-            return result;
-          };
-        },
-      });
+      return proxyObjcClass(className);
     },
   }
 );
 
-function wrapObjcClass(className){
-  if(wrappedObjcClassCache[className]){
-    return wrappedObjcClassCache[className];
+function proxyObjcClass(className) {
+  if (proxiedObjcClassCache[className]) {
+    return proxiedObjcClassCache[className];
   }
 
   class NSObjectWrapper {
@@ -106,7 +34,7 @@ function wrapObjcClass(className){
           `${NSObjectWrapper.native[i].toString(16).padStart(2, "0")}`
         );
       }
-  
+
       return `<${NSObjectWrapper.nativeClassName} ${address.join(" ")}>`;
     }
     static [Symbol.for("nodejs.util.inspect.custom")]() {
@@ -115,17 +43,55 @@ function wrapObjcClass(className){
   }
   Object.defineProperty(NSObjectWrapper, "name", { value: className });
 
-  wrappedObjcClassCache[className] = NSObjectWrapper;
-  return NSObjectWrapper;
+  const proxy = new Proxy(NSObjectWrapper, {
+    // Proxies `new classes.NSString()` -> `classes.NSString.alloc().init()`
+    construct(target, args) {
+      console.log(`construct()`, ...args);
+      return this.get(target, "alloc")().init();
+    },
+    has(target, prop, receiver) {
+      console.log(`has('${prop}')`);
+      return Reflect.has(...arguments);
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      console.log(`getOwnPropertyDescriptor('${prop}')`);
+      return Reflect.getOwnPropertyDescriptor(...arguments);
+    },
+    getPrototypeOf(target, prop, receiver) {
+      console.log(`getPrototypeOf('${prop}')`);
+      return Reflect.getPrototypeOf(...arguments);
+    },
+    ownKeys(target) {
+      console.log(`ownKeys('${prop}')`);
+      return Reflect.ownKeys(...arguments);
+    },
+    get(target, prop, receiver) {
+      console.log(`get('${prop}')`);
+      if ([...Object.keys(target), "toString"].includes(prop)) {
+        return Reflect.get(...arguments);
+      }
+
+      return (...args) => {
+        // TODO: marshal any args from JS into native as necessary - unless this
+        // is already largely be handled for us on the native side.
+        const result = msgSend(target.native, registerName(prop), ...args);
+
+        return marshallObjcValueToJs(result);
+      };
+    },
+  });
+
+  proxiedObjcClassCache[className] = proxy;
+  return proxy;
 }
 
 /**
- * @param {Buffer} classInstance 
+ * @param {Buffer} classInstance
  */
-function wrapObjcClassInstance(classInstance){
+function proxyObjcClassInstance(classInstance) {
   // Avoid rewrapping an instance that we have already wrapped.
-  const cached = wrappedObjcClassInstanceCache.get(classInstance);
-  if(cached){
+  const cached = proxiedObjcClassInstanceCache.get(classInstance);
+  if (cached) {
     return cached;
   }
 
@@ -146,24 +112,91 @@ function wrapObjcClassInstance(classInstance){
           `${NSObjectWrapper.native[i].toString(16).padStart(2, "0")}`
         );
       }
-  
+
       return `<${NSObjectWrapper.nativeClassName} ${address.join(" ")}>`;
     }
     static [Symbol.for("nodejs.util.inspect.custom")]() {
       return NSObjectWrapper.toString();
     }
   }
-  Object.defineProperty(NSObjectWrapper, "name", { value: `${className}` });
+  Object.defineProperty(NSObjectWrapper, "name", {
+    value: `${className}Instance`,
+  });
 
-  wrappedObjcClassInstanceCache.set(classInstance, NSObjectWrapper);
+  const proxy = new Proxy(NSObjectWrapper, {
+    // Proxies `new classes.NSString()` -> `classes.NSString.alloc().init()`
+    construct(target, args) {
+      console.log(`construct()`, ...args);
+      return this.get(target, "alloc")().init();
+    },
+    has(target, prop, receiver) {
+      console.log(`has('${prop}')`);
+      return Reflect.has(...arguments);
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      console.log(`getOwnPropertyDescriptor('${prop}')`);
+      return Reflect.getOwnPropertyDescriptor(...arguments);
+    },
+    getPrototypeOf(target, prop, receiver) {
+      console.log(`getPrototypeOf('${prop}')`);
+      return Reflect.getPrototypeOf(...arguments);
+    },
+    ownKeys(target) {
+      console.log(`ownKeys('${prop}')`);
+      return Reflect.ownKeys(...arguments);
+    },
+    get(target, prop, receiver) {
+      console.log(`get('${prop}')`);
+      if ([...Object.keys(target), "toString"].includes(prop)) {
+        return Reflect.get(...arguments);
+      }
 
-  return NSObjectWrapper;
+      return (...args) => {
+        // TODO: marshal any args from JS into native as necessary - unless this
+        // is already largely be handled for us on the native side.
+        const result = msgSend(target.native, registerName(prop), ...args);
+
+        return marshallObjcValueToJs(result);
+      };
+    },
+  });
+
+  proxiedObjcClassInstanceCache.set(classInstance, proxy);
+  return proxy;
+}
+
+function marshallObjcValueToJs(result) {
+  if (!(result instanceof Buffer)) {
+    console.log("Result was not a buffer", result);
+    return result;
+  }
+
+  if (isClass(result)) {
+    const className = getClassName(result);
+    console.log(`Wrapping class ${className}`);
+    // A bit of a wasted step (we ask for the class name only to call
+    // `getClass(className)` on it) but allows us to reuse our cache,
+    // which is keyed on className.
+    return proxyObjcClass(className);
+  }
+
+  if (isClassInstance(result)) {
+    console.log(`Wrapping class instance.`);
+    return proxyObjcClassInstance(result);
+  }
+
+  console.log(
+    "Result was a buffer, but neither a class nor a class instance.",
+    result
+  );
+
+  return result;
 }
 
 const stringA = msgSend(
-  msgSend(getClass('NSString'), registerName('alloc')),
-  registerName('initWithString:'),
-  'Hello',
+  msgSend(getClass("NSString"), registerName("alloc")),
+  registerName("initWithString:"),
+  "Hello"
 );
 
 const str = classes.NSString;
@@ -189,8 +222,7 @@ console.log(alloc);
 const init = alloc.init();
 console.log(init);
 
-// const nue = new str();
-// console.log(nue);
-
+const nue = new str();
+console.log(nue);
 
 // console.log(classes.NSString);
