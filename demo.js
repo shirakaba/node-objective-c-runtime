@@ -1,6 +1,6 @@
 const { objc, sel } = require(".");
 
-const { isClass, isClassInstance, getClass, msgSend } = objc;
+const { isClass, isClassInstance, getClass, getClassName, msgSend } = objc;
 const { registerName } = sel;
 
 const classes = new Proxy(
@@ -114,6 +114,8 @@ console.log("isClassInstance(getClass('NSString'))", isClassInstance(getClass("N
 console.log("isClassInstance(null)", isClassInstance(null));
 console.log("isClassInstance(stringA)", isClassInstance(stringA));
 
+console.log("getClassName(stringA)", getClassName(stringA));
+console.log("getClassName(classes.NSString.nativeClass)", getClassName(classes.NSString.nativeClass));
 const alloc = str.alloc();
 console.log(alloc);
 // const init = str.alloc().init();

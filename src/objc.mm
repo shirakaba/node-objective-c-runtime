@@ -137,6 +137,47 @@ napi_value GetClass(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// const char* object_getClassName(id self)
+napi_value GetClassName(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+
+  napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+  napi_value result = nullptr;
+
+  if (argc < 1) {
+    napi_get_boolean(env, false, &result);
+    return result;
+  }
+
+  bool valuetype0isbuffer = false;
+  napi_is_buffer(env, args[0], &valuetype0isbuffer);
+
+  if (!valuetype0isbuffer) {
+    napi_throw_type_error(env, NULL, "Expected 'self' argument to be a buffer!");
+    return nullptr;
+  }
+
+  // We use a try-catch because the buffer could be pointing at just about any
+  // data type (and the lifetime is not guaranteed).
+  @try {
+    void* selfData;
+    size_t selfLength;
+    napi_get_buffer_info(env, args[0], &selfData, &selfLength);
+
+    id self;
+    memcpy(&self, selfData, sizeof(self));
+
+    napi_create_string_utf8(env, object_getClassName(self), -1, &result);
+  }
+  @catch (NSException *exception) {
+    napi_throw_error(env, NULL, "Failed to get class name from object.");
+  }
+
+  return result;
+}
+
 // Class objc_allocateClassPair(Class superclass, const char *name, size_t extraBytes)
 napi_value AllocateClassPair(napi_env env, napi_callback_info info) {
   size_t argc = 3;
@@ -471,6 +512,7 @@ napi_value__* Init(napi_env env, napi_value exports) {
   napi_property_descriptor isClass = DECLARE_NAPI_METHOD("isClass", IsClass);
   napi_property_descriptor isClassInstance = DECLARE_NAPI_METHOD("isClassInstance", IsClassInstance);
   napi_property_descriptor getClass = DECLARE_NAPI_METHOD("getClass", GetClass);
+  napi_property_descriptor getClassName = DECLARE_NAPI_METHOD("getClassName", GetClassName);
   napi_property_descriptor allocateClassPair = DECLARE_NAPI_METHOD("allocateClassPair", AllocateClassPair);
   napi_property_descriptor msgSend = DECLARE_NAPI_METHOD("msgSend", MsgSend);
   napi_property_descriptor getClassList = DECLARE_NAPI_METHOD("getClassList", GetClassList);
@@ -480,6 +522,7 @@ napi_value__* Init(napi_env env, napi_value exports) {
     isClass,
     isClassInstance,
     getClass,
+    getClassName,
     allocateClassPair,
     msgSend,
     getClassList,
