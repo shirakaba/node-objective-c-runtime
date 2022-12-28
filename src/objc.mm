@@ -8,6 +8,39 @@
 
 #include <napi.h>
 
+// bool object_isClass(self)
+napi_value IsClass(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+
+  napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+  napi_value result = nullptr;
+
+  if (argc < 1) {
+    napi_get_boolean(env, false, &result);
+    return result;
+  }
+
+  bool valuetype0isbuffer = false;
+  napi_is_buffer(env, args[0], &valuetype0isbuffer);
+
+  if (!valuetype0isbuffer) {
+    napi_get_boolean(env, false, &result);
+    return result;
+  }
+
+  void* selfData;
+  size_t selfLength;
+  napi_get_buffer_info(env, args[0], &selfData, &selfLength);
+
+  id self;
+  memcpy(&self, selfData, sizeof(self));
+  napi_get_boolean(env, object_isClass(self), &result);
+
+  return result;
+}
+
 // Class objc_getClass(const char *name)
 napi_value GetClass(napi_env env, napi_callback_info info) {
   size_t argc = 1;
@@ -377,6 +410,7 @@ napi_value RegisterClassPair(napi_env env, napi_callback_info info) {
 napi_value__* Init(napi_env env, napi_value exports) {
   napi_status status;
 
+  napi_property_descriptor isClass = DECLARE_NAPI_METHOD("isClass", IsClass);
   napi_property_descriptor getClass = DECLARE_NAPI_METHOD("getClass", GetClass);
   napi_property_descriptor allocateClassPair = DECLARE_NAPI_METHOD("allocateClassPair", AllocateClassPair);
   napi_property_descriptor msgSend = DECLARE_NAPI_METHOD("msgSend", MsgSend);
@@ -384,6 +418,7 @@ napi_value__* Init(napi_env env, napi_value exports) {
   napi_property_descriptor registerClassPair = DECLARE_NAPI_METHOD("registerClassPair", RegisterClassPair);
 
   const napi_property_descriptor properties[] = {
+    isClass,
     getClass,
     allocateClassPair,
     msgSend,
