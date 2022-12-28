@@ -6,8 +6,8 @@ const { registerName } = sel;
 const proxiedObjcClassCache = {};
 const proxiedObjcClassInstanceCache = new WeakMap();
 
-const nativeProxySymbol = Symbol('native proxy');
-function isNativeProxy(obj){
+const nativeProxySymbol = Symbol("native proxy");
+function isNativeProxy(obj) {
   return !!obj?.[nativeProxySymbol];
 }
 
@@ -31,6 +31,7 @@ function proxyObjcClass(className) {
     static nativeClass = NSObjectWrapper.native;
     static nativeClassName = className;
     static nativeType = "class";
+    static [nativeProxySymbol] = true;
 
     static toString() {
       const address = [];
@@ -63,7 +64,7 @@ function proxyObjcClass(className) {
         const result = msgSend(
           target.native,
           registerName(prop),
-          ...args.map(marshalJSValueToNative),
+          ...args.map(marshalJSValueToNative)
         );
 
         return marshalObjcValueToJs(result);
@@ -94,6 +95,7 @@ function proxyObjcClassInstance(classInstance) {
     static nativeClass = getClass(className);
     static nativeClassName = className;
     static nativeType = "class instance";
+    static [nativeProxySymbol] = true;
 
     static toString() {
       const address = [];
@@ -116,19 +118,23 @@ function proxyObjcClassInstance(classInstance) {
   const proxy = new Proxy(NSObjectWrapper, {
     // Proxies `new classes.NSString()` -> `classes.NSString.alloc().init()`
     construct(target, args) {
-      throw new TypeError('Class instances are not constructors.');
+      throw new TypeError("Class instances are not constructors.");
     },
     get(target, prop, receiver) {
-      console.log(`get('${prop}')`);
-      if ([...Object.keys(target), "toString"].includes(prop)) {
+      if (
+        typeof prop === "symbol" ||
+        [...Object.keys(target), "toString"].includes(prop)
+      ) {
         return Reflect.get(...arguments);
       }
+
+      console.log(`get('${prop}')`);
 
       return (...args) => {
         const result = msgSend(
           target.native,
           registerName(prop),
-          ...args.map(marshalJSValueToNative),
+          ...args.map(marshalJSValueToNative)
         );
 
         return marshalObjcValueToJs(result);
@@ -140,7 +146,7 @@ function proxyObjcClassInstance(classInstance) {
   return proxy;
 }
 
-function marshalJSValueToNative(arg){
+function marshalJSValueToNative(arg) {
   // For now, we just pull out the .native property from any native properties,
   // but there will be other cases to handle later.
   return isNativeProxy(arg) ? arg.native : arg;
@@ -180,8 +186,6 @@ const hello = NSString.alloc()["initWithString:"]("Hello");
 
 const str = NSString.alloc()
   ["initWithString:"]("Hello")
-  ['stringByAppendingString:'](
-    NSString.alloc()["initWithString:"]("World").native
-  );
+  ["stringByAppendingString:"](NSString.alloc()["initWithString:"]("World"));
 
 console.log(str);
