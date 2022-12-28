@@ -1,6 +1,13 @@
 const { objc, sel } = require(".");
 
-const { isClass, isClassInstance, getClass, getClassName, msgSend } = objc;
+const {
+  isClass,
+  isClassInstance,
+  getClass,
+  getClassName,
+  msgSend,
+  marshall_NSString_to_JS_string,
+} = objc;
 const { registerName } = sel;
 
 const proxiedObjcClassCache = {};
@@ -55,7 +62,6 @@ function proxyObjcClass(className) {
       return this.get(target, "alloc")().init();
     },
     get(target, prop, receiver) {
-      console.log(`get('${prop}')`);
       if ([...Object.keys(target), "toString"].includes(prop)) {
         return Reflect.get(...arguments);
       }
@@ -105,7 +111,11 @@ function proxyObjcClassInstance(classInstance) {
         );
       }
 
-      return `<${NSObjectWrapper.nativeClassName} ${address.join(" ")}>`;
+      return `<${NSObjectWrapper.nativeClassName} ${address.join(
+        " "
+      )}>${marshall_NSString_to_JS_string(NSObjectWrapper.native)}</${
+        NSObjectWrapper.nativeClassName
+      }>`;
     }
     static [Symbol.for("nodejs.util.inspect.custom")]() {
       return NSObjectWrapper.toString();
@@ -127,8 +137,6 @@ function proxyObjcClassInstance(classInstance) {
       ) {
         return Reflect.get(...arguments);
       }
-
-      console.log(`get('${prop}')`);
 
       return (...args) => {
         const result = msgSend(
@@ -154,13 +162,11 @@ function marshalJSValueToNative(arg) {
 
 function marshalObjcValueToJs(result) {
   if (!(result instanceof Buffer)) {
-    console.log("Result was not a buffer", result);
     return result;
   }
 
   if (isClass(result)) {
     const className = getClassName(result);
-    console.log(`Wrapping class ${className}`);
     // A bit of a wasted step (we ask for the class name only to call
     // `getClass(className)` on it) but allows us to reuse our cache,
     // which is keyed on className.
@@ -168,24 +174,16 @@ function marshalObjcValueToJs(result) {
   }
 
   if (isClassInstance(result)) {
-    console.log(`Wrapping class instance.`);
     return proxyObjcClassInstance(result);
   }
-
-  console.log(
-    "Result was a buffer, but neither a class nor a class instance.",
-    result
-  );
 
   return result;
 }
 
 const { NSString } = classes;
 
-const hello = NSString.alloc()["initWithString:"]("Hello");
-
 const str = NSString.alloc()
   ["initWithString:"]("Hello")
-  ["stringByAppendingString:"](NSString.alloc()["initWithString:"]("World"));
+  ["stringByAppendingString:"](NSString.alloc()["initWithString:"](", World!"));
 
 console.log(str);

@@ -503,6 +503,52 @@ napi_value RegisterClassPair(napi_env env, napi_callback_info info) {
   return nullptr;
 }
 
+napi_value Marshall_NSString_to_JS_string(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+
+  napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+  napi_value result = nullptr;
+
+  if (argc < 1) {
+    napi_throw_type_error(env, NULL, "Expected 'self' argument!");
+    return nullptr;
+  }
+
+  bool valuetype0isbuffer = false;
+  napi_is_buffer(env, args[0], &valuetype0isbuffer);
+
+  if (!valuetype0isbuffer) {
+    napi_throw_type_error(env, NULL, "Expected 'self' argument to be a buffer!");
+    return nullptr;
+  }
+
+  // We use a try-catch because the buffer could be pointing at just about any
+  // data type (and the lifetime is not guaranteed).
+  @try {
+    void* selfData;
+    size_t selfLength;
+    napi_get_buffer_info(env, args[0], &selfData, &selfLength);
+
+    id self;
+    memcpy(&self, selfData, sizeof(self));
+
+    if([self isKindOfClass:[NSObject class]]){
+      napi_create_string_utf8(env, [self UTF8String], NAPI_AUTO_LENGTH, &result);
+    } else {
+      napi_throw_type_error(env, NULL, "Expected 'self' argument to be an NSString!");
+      return nullptr;
+    }
+  }
+  @catch (NSException *exception) {
+    // Handles both ObjC and C++ exceptions as long as it's 64-bit.
+    napi_throw_error(env, NULL, "Failed to marshal NSString to JS string.");
+  }
+
+  return result;
+}
+
 #define DECLARE_NAPI_METHOD(name, func)                          \
   { name, 0, func, 0, 0, 0, napi_default, 0 }
 
@@ -511,6 +557,7 @@ napi_value__* Init(napi_env env, napi_value exports) {
 
   napi_property_descriptor isClass = DECLARE_NAPI_METHOD("isClass", IsClass);
   napi_property_descriptor isClassInstance = DECLARE_NAPI_METHOD("isClassInstance", IsClassInstance);
+  napi_property_descriptor marshall_NSString_to_JS_string = DECLARE_NAPI_METHOD("marshall_NSString_to_JS_string", Marshall_NSString_to_JS_string);
   napi_property_descriptor getClass = DECLARE_NAPI_METHOD("getClass", GetClass);
   napi_property_descriptor getClassName = DECLARE_NAPI_METHOD("getClassName", GetClassName);
   napi_property_descriptor allocateClassPair = DECLARE_NAPI_METHOD("allocateClassPair", AllocateClassPair);
@@ -526,7 +573,8 @@ napi_value__* Init(napi_env env, napi_value exports) {
     allocateClassPair,
     msgSend,
     getClassList,
-    registerClassPair
+    registerClassPair,
+    marshall_NSString_to_JS_string
   };
 
   status = napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);
