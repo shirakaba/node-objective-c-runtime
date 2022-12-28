@@ -4,47 +4,7 @@ const { isClass, isClassInstance, getClass, getClassName, msgSend } = objc;
 const { registerName } = sel;
 
 const wrappedObjcClassCache = {};
-
-function wrapObjcClass(className){
-  if(wrappedObjcClassCache[className]){
-    return wrappedObjcClassCache[className];
-  }
-
-  class NSObjectWrapper {
-    /** @type {Buffer} */
-    static nativeClass = getClass(className);
-    /**
-     * @param {string} className
-     */
-    constructor(className) {
-      /** @type {string} */
-      this.nativeClassName = className;
-    }
-    toString() {
-      const address = [];
-      for (let i = 0, length = this.nativeClass.length; i < length; i++) {
-        address.push(
-          `${this.nativeClass[i].toString(16).padStart(2, "0")}`
-        );
-      }
-  
-      return `<${this.nativeClassName} ${address.join(" ")}>`;
-    }
-    [Symbol.for("nodejs.util.inspect.custom")]() {
-      return this.toString();
-    }
-  }
-  Object.defineProperty(NSObjectWrapper, "name", { value: className });
-  // Allow nativeClass to be accessed both on the instance and on the class.
-  // This allows us to send messages either to the class or an instance.
-  Object.defineProperty(NSObjectWrapper.prototype, "nativeClass", {
-    value: NSObjectWrapper.nativeClass,
-  });
-
-  wrappedObjcClassCache[className] = NSObjectWrapper;
-  return NSObjectWrapper;
-}
-
+const wrappedObjcClassInstanceCache = new WeakMap();
 
 const classes = new Proxy(
   {},
@@ -78,7 +38,7 @@ const classes = new Proxy(
         },
         get(target, prop, receiver) {
           console.log(`get('${prop}')`);
-          if (prop === "toString" || prop === "nativeClass") {
+          if ([...Object.keys(WrappedObjcClass), "toString"].includes(prop)) {
             return Reflect.get(...arguments);
           }
           // FIXME: if this returns a Buffer around an Obj-C class, we need to
@@ -91,14 +51,34 @@ const classes = new Proxy(
             // unless this is already largely be handled for us on the native
             // side.
             const result = msgSend(
-              target.nativeClass,
+              target.native,
               registerName(prop),
               ...args
             );
+
             if (!(result instanceof Buffer)) {
+              console.log('Result ');
               return result;
             }
-            console.log(`get('${prop}') gave a Buffer, so we'll wrap it.`);
+
+            if(isClass(result)){
+              const className = getClassName(result);
+              console.log(`get(${prop}): wrapping class ${className}`);
+              // A bit of a wasted step (we ask for the class name only to call
+              // `getClass(className)` on it) but allows us to reuse our cache,
+              // which is keyed on className.
+              return wrapObjcClass(className);
+            }
+
+            if(isClassInstance(result)){
+              console.log(`get(${prop}): wrapping class instance.`);
+              return wrapObjcClassInstance(result);
+            }
+
+            // It's probably some other native thing that hasn't been
+            // marshalled into a JS type, so just a missing feature.
+            console.warn('Unexpectedly got a Buffer that is neither a class nor a class instance.');
+
             return result;
           };
         },
@@ -107,6 +87,79 @@ const classes = new Proxy(
   }
 );
 
+function wrapObjcClass(className){
+  if(wrappedObjcClassCache[className]){
+    return wrappedObjcClassCache[className];
+  }
+
+  class NSObjectWrapper {
+    /** @type {Buffer} */
+    static native = getClass(className);
+    static nativeClass = NSObjectWrapper.native;
+    static nativeClassName = className;
+    static nativeType = "class";
+
+    static toString() {
+      const address = [];
+      for (let i = 0, length = NSObjectWrapper.native.length; i < length; i++) {
+        address.push(
+          `${NSObjectWrapper.native[i].toString(16).padStart(2, "0")}`
+        );
+      }
+  
+      return `<${NSObjectWrapper.nativeClassName} ${address.join(" ")}>`;
+    }
+    static [Symbol.for("nodejs.util.inspect.custom")]() {
+      return NSObjectWrapper.toString();
+    }
+  }
+  Object.defineProperty(NSObjectWrapper, "name", { value: className });
+
+  wrappedObjcClassCache[className] = NSObjectWrapper;
+  return NSObjectWrapper;
+}
+
+/**
+ * @param {Buffer} classInstance 
+ */
+function wrapObjcClassInstance(classInstance){
+  // Avoid rewrapping an instance that we have already wrapped.
+  const cached = wrappedObjcClassInstanceCache.get(classInstance);
+  if(cached){
+    return cached;
+  }
+
+  const className = getClassName(classInstance);
+
+  // TODO: implement equality methods
+  class NSObjectWrapper {
+    /** @type {Buffer} */
+    static native = classInstance;
+    static nativeClass = getClass(className);
+    static nativeClassName = className;
+    static nativeType = "class instance";
+
+    static toString() {
+      const address = [];
+      for (let i = 0, length = NSObjectWrapper.native.length; i < length; i++) {
+        address.push(
+          `${NSObjectWrapper.native[i].toString(16).padStart(2, "0")}`
+        );
+      }
+  
+      return `<${NSObjectWrapper.nativeClassName} ${address.join(" ")}>`;
+    }
+    static [Symbol.for("nodejs.util.inspect.custom")]() {
+      return NSObjectWrapper.toString();
+    }
+  }
+  Object.defineProperty(NSObjectWrapper, "name", { value: `${className}` });
+
+  wrappedObjcClassInstanceCache.set(classInstance, NSObjectWrapper);
+
+  return NSObjectWrapper;
+}
+
 const stringA = msgSend(
   msgSend(getClass('NSString'), registerName('alloc')),
   registerName('initWithString:'),
@@ -114,30 +167,30 @@ const stringA = msgSend(
 );
 
 const str = classes.NSString;
-console.log(str);
+// console.log(str);
 
-console.log("isClass(classes.NSString)", isClass(str));
-console.log("isClass(classes.NSString.nativeClass)", isClass(str.nativeClass));
-console.log("isClass(getClass('NSString'))", isClass(getClass("NSString")));
-console.log("isClass(null)", isClass(null));
-console.log("isClass(stringA)", isClass(stringA));
+// console.log("isClass(classes.NSString)", isClass(str));
+// console.log("isClass(classes.NSString.native)", isClass(str.native));
+// console.log("isClass(getClass('NSString'))", isClass(getClass("NSString")));
+// console.log("isClass(null)", isClass(null));
+// console.log("isClass(stringA)", isClass(stringA));
 
-console.log("isClassInstance(classes.NSString)", isClassInstance(str));
-console.log("isClassInstance(classes.NSString.nativeClass)", isClassInstance(str.nativeClass));
-console.log("isClassInstance(getClass('NSString'))", isClassInstance(getClass("NSString")));
-console.log("isClassInstance(null)", isClassInstance(null));
-console.log("isClassInstance(stringA)", isClassInstance(stringA));
+// console.log("isClassInstance(classes.NSString)", isClassInstance(str));
+// console.log("isClassInstance(classes.NSString.native)", isClassInstance(str.native));
+// console.log("isClassInstance(getClass('NSString'))", isClassInstance(getClass("NSString")));
+// console.log("isClassInstance(null)", isClassInstance(null));
+// console.log("isClassInstance(stringA)", isClassInstance(stringA));
 
-console.log("getClassName(stringA)", getClassName(stringA));
-console.log("getClassName(classes.NSString.nativeClass)", getClassName(classes.NSString.nativeClass));
+// console.log("getClassName(stringA)", getClassName(stringA));
+// console.log("getClassName(classes.NSString.native)", getClassName(classes.NSString.native));
 
 const alloc = str.alloc();
 console.log(alloc);
-// const init = str.alloc().init();
+const init = alloc.init();
+console.log(init);
 
 // const nue = new str();
 // console.log(nue);
 
-// console.log(init);
 
 // console.log(classes.NSString);
